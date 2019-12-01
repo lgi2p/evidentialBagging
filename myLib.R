@@ -1,7 +1,3 @@
-####################################
-# FUNCTIONS FOR EVIDENTIAL BAGGING #
-####################################
-
 baggingResampling <- function(learningDataset, allAtt = T){
   
   classLabels     <- unique(learningDataset$class)
@@ -51,11 +47,11 @@ class2probaPred <- function(classPredictions, levels){
   return(probaPredictions)
 }
 #############################################################################################
-evidBagging <- function(dataset, learningAlgorithms, nClassifierPerBag, nRuns, nnetSize, 
-                        nModelPerBag, combinationType){
+evidBagging <- function(dataset, parms){
   
-  # Preprocessings:
-  equation    <- "class ~ ." # the class will be predicted from all attributes
+  learningAlgorithms = parms$learningAlgorithms; nClassifierPerBag = parms$nClassifierPerBag; nRuns = parms$nRuns
+  nFold = parms$nFold; nnetSize = parms$nnetSize; nModelPerBag = parms$nModelPerBag; combinationType = parms$combinationType
+  equation    <- "class ~ ."
   classLabels <- unique(dataset$class)
   classLabels <- classLabels[order(classLabels)]
   singleClassifierNames <- setdiff(learningAlgorithms, 
@@ -64,8 +60,8 @@ evidBagging <- function(dataset, learningAlgorithms, nClassifierPerBag, nRuns, n
   for (iClassifier in 1 : length(learningAlgorithms)){
     eval(parse(text = paste0(learningAlgorithms[iClassifier], "FinalAcc <- c()")))
   }
-  iRun  <- 1 # for 
-  iFold <- 1 # debuging
+  iRun <- 1
+  iFold <- 1
   
   compTimes <- c()
   for (iRun in 1 : nRuns){
@@ -76,43 +72,41 @@ evidBagging <- function(dataset, learningAlgorithms, nClassifierPerBag, nRuns, n
     }
 
     CT <- 0
-    for (iFold in 1 : 10){
-      if (iFold < 10){                         #
-        cat("    fold ", iFold, "/", 10, ": ") # screen
-      } else {                                 # printing
-        cat("    fold", iFold, "/", 10, ": ")  # adjustments
-      }                                        #
+    for (iFold in 1 : nFold){
+      if (iFold < 10){
+        cat("    fold ", iFold, "/", nFold, ": ")
+      } else {
+        cat("    fold", iFold, "/", nFold, ": ")
+      }
       
       # Data sampling into learning, validation and testing sets:
       learningExamplesIndexes <- c()                                                           
-      for (iLearningFold in eval(setdiff(1:10, iFold))){                                       
+      for (iLearningFold in eval(setdiff(1:nFold, iFold))){                                       
         learningExamplesIndexes <- c(learningExamplesIndexes, CVfoldsIndexes[[iLearningFold]]) 
       }                                                                                        
       learningData   <- dataset[learningExamplesIndexes,]                                      
-      validationData <- learningData[eval(floor(0.75 * nrow(learningData)) + 1) : nrow(learningData), ]
+      validationData <- learningData[eval(floor(0.75 * nrow(learningData)) + 1)  : nrow(learningData), ]
       learningData   <- learningData[1 : eval(floor(0.75 * nrow(learningData))), ]
       testingData    <- dataset[CVfoldsIndexes[[iFold]], ]
       trueClasses    <- testingData$class
       
-      # Learning of single classifiers (for each learning algorithm a bag is created):
-      compTimeLear <- system.time(
+      # Learning of single classifiers:
+      compTimeLear   <- system.time(
         bags <- learnClassifier(equation, learningData, "Bag", learningAlgorithms, nModelPerBag)
       )
       compTimePred <- system.time(
-        for (iClassifier in 1 : length(learningAlgorithms)){ # 
+        for (iClassifier in 1 : length(learningAlgorithms)){
           classifierName <- learningAlgorithms[iClassifier]
-          if (grepl("Bag", classifierName)){ # for each bag:
+          if (grepl("Bag", classifierName)){
             cat(paste0(classifierName, ", "))
             
             # Predictions:
-            classPredictions <- predictClass(classifierName, bags, validationData, testingData, 
-                                             learningAlgorithms, classLabels, nModelPerBag, combinationType)
+            classPredictions <- predictClass(classifierName, bags, validationData, testingData, learningAlgorithms, classLabels, nModelPerBag, combinationType)
             
             # Evaluation:
             classifierAcc <- sum(as.character(classPredictions) == as.character(trueClasses))/length(trueClasses)
-            eval(parse(text = paste0(classifierName, "Accuracies <- c(", classifierName, 
-                                     "Accuracies, classifierAcc)")))
-          } 
+            eval(parse(text = paste0(classifierName, "Accuracies <- c(", classifierName, "Accuracies, classifierAcc)")))
+          }
         }
       )
       CT <- CT + compTimeLear[3] + compTimePred[3]
@@ -260,41 +254,30 @@ learnClassifier <- function(equation, learningData, classifierName, learningAlgo
   return(classifier)
 }
 #############################################################################################
-predictClass <- function(classifierName, classifier, validationData, testingData, 
-                         learningAlgorithms, classLabels, nModelPerBag, combinationType){
+predictClass <- function(classifierName, classifier, validationData, testingData, learningAlgorithms, classLabels, nModelPerBag, combinationType){
   
-  if (classifierName %in% c("tree", "forest", "bayes", "nnet")){             #
-    classPredictions <- predict(classifier, testingData, type = "class")     # 
-  } else if (classifierName %in% c("c.nnet", "SVM")){                        # for single classifiers
-    classPredictions <- predict(classifier, testingData)                     # the prediction is precise
-  } else if (classifierName %in% c("lda")){                                  #
-    testingAttributes <- testingData[, setdiff(names(testingData), "class")] #
-    classPredictions <- predict(classifier, testingAttributes)$class         #
-  } else if (classifierName == "voteBag"){ # for voting bags
+  if (classifierName %in% c("tree", "forest", "bayes", "nnet")){
+    classPredictions <- predict(classifier, testingData, type = "class")
+  } else if (classifierName %in% c("c.nnet", "SVM")){
+    classPredictions <- predict(classifier, testingData)
+  } else if (classifierName %in% c("lda")){
+    classPredictions <- predict(classifier, testingData[, setdiff(names(testingData), "class") ])$class
+  } else if (classifierName == "voteBag"){
     classPredictions <- c()
-    for (iClassifier in 1 : length(learningAlgorithms)){   # for each
-      if (!grepl("Bag", learningAlgorithms[iClassifier])){ # learning algorithm:
+    for (iClassifier in 1 : length(learningAlgorithms)){
+      if (!grepl("Bag", learningAlgorithms[iClassifier])){
         singleClassifierName <- learningAlgorithms[iClassifier]
-        for (iModel in 1 : nModelPerBag){ # for each single classifier in the correspnoding bag:
-          # Classifiers recovery:
+        for (iModel in 1 : nModelPerBag){
           eval(parse(text = paste0("singleClassifier <- classifier$", singleClassifierName, "[[iModel]]")))
-          # Classifiers' precise prediction:
           eval(parse(text = paste0("classPredictions <- cbind(classPredictions, ", singleClassifierName, 
-                                   " = as.character(predictClass(singleClassifierName, singleClassifier, ",
-                                   "NULL, testingData, learningAlgorithms, classLabels)))")))
+                                   " = as.character(predictClass(singleClassifierName, singleClassifier, NULL, testingData, learningAlgorithms, classLabels)))")))
         }
       }
     }
-    # Bagging global prediction:
-    classPredictions <- vote(classPredictions) 
+    classPredictions <- vote(classPredictions)
   } else if (classifierName %in% c("EBag1", "EBag2", "EBag3", "EBag4")){
-    # Belief functions generation:
-    evidPredPerClassifier <- bfGener(classifierName, classifier, validationData, 
-                                     testingData, classLabels, nModelPerBag)
-    # Belief functions aggregagtion:
-    evidPred              <- bfFusion(classifierName, evidPredPerClassifier, 
-                                      nModelPerBag, combinationType)
-    # Bagging global prediction:
+    evidPredPerClassifier <- bfGener(classifierName, classifier, validationData, testingData, classLabels, nModelPerBag)
+    evidPred              <- bfFusion(classifierName, evidPredPerClassifier, nModelPerBag, combinationType)
     classPredictions      <- evidDecision(classifierName, evidPred)
   }
 
@@ -338,7 +321,6 @@ bfGener <- function(classifierName, classifier, validationData, testingData, cla
         singleClassifier <- oneModelBag[[iModel]]
         
         # Performance evaluation on test data:
-        #### Single classifiers' precise predictions:
         if (singleClassifierName == "c.nnet"){
           singleClassifierClassPred <- predict(singleClassifier, validationData)
         } else if (singleClassifierName == "lda"){
@@ -346,15 +328,14 @@ bfGener <- function(classifierName, classifier, validationData, testingData, cla
         } else {
           singleClassifierClassPred <- predict(singleClassifier, validationData, type = "class")
         }
-        #### Single classifiers' accuracy computation:
         accuracy <- sum(as.character(singleClassifierClassPred) == as.character(validationData$class))/nrow(validationData)
         
-        # Probabilist predictions:
+        # Probabilist predictions computation:
         classProbPred <- computeProbaPred(singleClassifierName, singleClassifier, testingData, classLabels)
         
         # Belief function generation:
-        classProbPred <- classProbPred * accuracy
-        classProbPred <- cbind(classProbPred, Omega_Y = rep(1 - accuracy, nrow(testingData)))
+        classProbPred             <- classProbPred * accuracy
+        classProbPred             <- cbind(classProbPred, Omega_Y = rep(1 - accuracy, nrow(testingData)))
         evidClassPredictions[[singleClassifierName]][[iModel]] <- classProbPred
       }
       
@@ -368,7 +349,6 @@ bfGener <- function(classifierName, classifier, validationData, testingData, cla
         singleClassifier <- oneModelBag[[iModel]]
         
         # Performance evaluation on test data:
-        #### Single classifiers' precise predictions:
         if (singleClassifierName == "c.nnet"){
           singleClassifierClassPred <- predict(singleClassifier, validationData)
         } else if (singleClassifierName == "lda"){
@@ -376,7 +356,6 @@ bfGener <- function(classifierName, classifier, validationData, testingData, cla
         } else {
           singleClassifierClassPred <- predict(singleClassifier, validationData, type = "class")
         }
-        #### Single classifiers' confusion matrices computation:
         singleClassifierClassPred         <- factor(singleClassifierClassPred)
         levels(singleClassifierClassPred) <- classLabels
         levels(validationData$class)      <- classLabels
@@ -439,8 +418,8 @@ bfGener <- function(classifierName, classifier, validationData, testingData, cla
 #############################################################################################
 bfFusion <- function(classifierName, evidPredPerClassifier, nModelPerBag, combinationType = "Mean"){
   if (combinationType == "Mean"){
-    finalBF <- matrix(0, nrow = nrow(evidPredPerClassifier[[1]][[1]]), 
-                         ncol = ncol(evidPredPerClassifier[[1]][[1]]))
+    # finalBF <- evidPredPerClassifier[[1]]
+    finalBF <- matrix(0, nrow = nrow(evidPredPerClassifier[[1]][[1]]), ncol = ncol(evidPredPerClassifier[[1]][[1]]))
     for (iClassifier in 1 : length(evidPredPerClassifier)){
       for (iModel in 1 : nModelPerBag){
         finalBF <- finalBF + evidPredPerClassifier[[iClassifier]][[iModel]]
@@ -449,8 +428,7 @@ bfFusion <- function(classifierName, evidPredPerClassifier, nModelPerBag, combin
     finalBF <- finalBF / length(evidPredPerClassifier)
   } else if (combinationType == "Dempster"){
     if (classifierName == "EBag1"){
-      finalBF <- matrix(0, nrow = nrow(evidPredPerClassifier[[1]][[1]]), 
-                           ncol = ncol(evidPredPerClassifier[[1]][[1]]))
+      finalBF <- matrix(0, nrow = nrow(evidPredPerClassifier[[1]][[1]]), ncol = ncol(evidPredPerClassifier[[1]][[1]]))
       for (iClassifier in 1 : length(evidPredPerClassifier)){
         for (iModel in 1 : nModelPerBag){
           finalBF <- finalBF + evidPredPerClassifier[[iClassifier]][[iModel]]
@@ -459,13 +437,14 @@ bfFusion <- function(classifierName, evidPredPerClassifier, nModelPerBag, combin
       finalBF <- finalBF / (length(evidPredPerClassifier) * nModelPerBag)
     } else {
       finalBF <- evidPredPerClassifier[[1]][[1]]
-      for (iModel in 2 : nModelPerBag){
-        m <- NULL
-        for (i in 1 : nrow(finalBF)){
-          m <- rbind(m, dempsterFusion(classifierName, finalBF[i, ], 
-                                       evidPredPerClassifier[[1]][[iModel]][i, ]))
+      if (nModelPerBag > 1){
+        for (iModel in 2 : nModelPerBag){
+          m <- NULL
+          for (i in 1 : nrow(finalBF)){
+            m <- rbind(m, dempsterFusion(classifierName, finalBF[i, ], evidPredPerClassifier[[1]][[iModel]][i, ]))
+          }
+          finalBF <- m
         }
-        finalBF <- m
       }
       for (iClassifier in 2 : length(evidPredPerClassifier)){
         if (classifierName == "EBag1"){
@@ -474,8 +453,7 @@ bfFusion <- function(classifierName, evidPredPerClassifier, nModelPerBag, combin
           for (iModel in 1 : nModelPerBag){
             m <- NULL
             for (i in 1 : nrow(finalBF)){
-              m <- rbind(m, dempsterFusion(classifierName, finalBF[i, ], 
-                                           evidPredPerClassifier[[iClassifier]][[iModel]][i, ]))
+              m <- rbind(m, dempsterFusion(classifierName, finalBF[i, ], evidPredPerClassifier[[iClassifier]][[iModel]][i, ]))
             }
             finalBF <- m
           }
@@ -484,20 +462,21 @@ bfFusion <- function(classifierName, evidPredPerClassifier, nModelPerBag, combin
     }
   } else if (combinationType == "Disjunction"){
     finalBF <- evidPredPerClassifier[[1]][[1]]
-    for (iModel in 2 : nModelPerBag){
-      m <- NULL
-      for (i in 1 : nrow(finalBF)){
-        m <- rbind(m, disjComb(classifierName, finalBF[i, ], 
-                               evidPredPerClassifier[[1]][[iModel]][i, ]))
+    if (nModelPerBag > 1){
+      for (iModel in 2 : nModelPerBag){
+        m <- NULL
+        for (i in 1 : nrow(finalBF)){
+          m <- rbind(m, disjComb(classifierName, finalBF[i, ], evidPredPerClassifier[[1]][[iModel]][i, ]))
+        }
+        finalBF <- m
       }
-      finalBF <- m
     }
+    
     for (iClassifier in 2 : length(evidPredPerClassifier)){
       for (iModel in 1 : nModelPerBag){
         m <- NULL
         for (i in 1 : nrow(finalBF)){
-          m <- rbind(m, disjComb(classifierName, finalBF[i, ], 
-                                 evidPredPerClassifier[[iClassifier]][[iModel]][i, ]))
+          m <- rbind(m, disjComb(classifierName, finalBF[i, ], evidPredPerClassifier[[iClassifier]][[iModel]][i, ]))
         }
         finalBF <- m
       }
@@ -624,8 +603,7 @@ evidDecision <- function(classifierName, evidPred){
   } else if (classifierName %in% c("EBag2", "EBag4")){
     evidClassPred <- c()
     for (i in 1 : nrow(evidPred)){
-      evidClassPred <- c(evidClassPred, 
-                         colnames(evidPred)[which.is.max(evidPred[i, 1 : eval(ncol(evidPred) - 1)])])
+      evidClassPred <- c(evidClassPred, colnames(evidPred)[which.is.max(evidPred[i, 1 : eval(ncol(evidPred) - 1)])])
     }
   } else if (classifierName == "EBag3"){
     focalElts   <- colnames(evidPred)
@@ -639,6 +617,8 @@ evidDecision <- function(classifierName, evidPred){
     K             <- length(classLabels)
     evidClassPred <- c()
     for (i in 1 : nrow(evidPred)){
+      # evidClassPred <- c(evidClassPred, colnames(evidPred)[which.is.max(evidPred[i, 1 : eval(ncol(evidPred) - K)])])
+      # evidClassPred <- c(evidClassPred, classLabels[which.is.max(contourFunction(evidPred[i, ]))])
       evidClassPred <- c(evidClassPred, classLabels[which.is.max(BetP(evidPred[i, ]))])
     }
   }
@@ -654,9 +634,7 @@ proba2BF <- function(classifierName, classProbPred, confusionMatrix){
   
   bigFocElts <- c()
   for (k in 1 : K){
-    bigFocElts <- c(bigFocElts, 
-                    paste0("{", paste(setdiff(classLabels, classLabels[k]), collapse=", "), 
-                           "}"))
+    bigFocElts <- c(bigFocElts, paste0("{", paste(setdiff(classLabels, classLabels[k]), collapse=", "), "}"))
   }
   focalElts <- union(classLabels, bigFocElts)
   
@@ -665,12 +643,10 @@ proba2BF <- function(classifierName, classProbPred, confusionMatrix){
     proba                  <- classProbPred[i, ]
     mostProbableLabelIndex <- which.max(proba)
     mostProbableLabel      <- classLabels[mostProbableLabelIndex]
-    unlikelyLabels         <- paste0("{", 
-                                     paste(setdiff(colnames(classProbPred), mostProbableLabel), 
-                                           collapse=", "), "}")
+    unlikelyLabels         <- paste0("{", paste(setdiff(colnames(classProbPred), mostProbableLabel), collapse=", "), "}")
     
     if (sum(confusionMatrix[mostProbableLabelIndex, ]) > 0){
-      probaConfusion         <- confusionMatrix[mostProbableLabelIndex, mostProbableLabelIndex] / sum(confusionMatrix[mostProbableLabelIndex, ])
+      probaConfusion         <- confusionMatrix[mostProbableLabelIndex, mostProbableLabelIndex]/sum(confusionMatrix[mostProbableLabelIndex, ])
     } else {
       probaConfusion         <- 0
     }
@@ -777,6 +753,37 @@ BetP <- function(mass){
   
   return(BetProb)
 }
+############################################################################################# CVfoldsIndexes <- createFolds(dataset$class)
+# createFoldsME <- function(vec, nFolds = 10){ 
+#   vec     <- as.character(vec)
+#   labels  <- unique(vec)
+#   labels  <- labels[order(labels)]
+#   K       <- length(labels)
+#   indexes <- list(NULL)
+#   for (iLabel in 1 : K){
+#     oneLabelIndexes <- which(vec == labels[iLabel])
+#     oneLabelIndexes <- oneLabelIndexes[sample(1 : length(oneLabelIndexes))]
+#     N1label         <- length(oneLabelIndexes)
+#     for (iFold in 1 : nFolds){
+#       if (length(indexes) >= iFold){
+#         indexes[[iFold]] <- c(indexes[[iFold]], oneLabelIndexes[1 : eval(floor(N1label/nFolds))])
+#       } else {
+#         indexes[[iFold]] <- oneLabelIndexes[1 : eval(floor(N1label/nFolds))]
+#       }
+#       oneLabelIndexes  <- oneLabelIndexes[eval(floor(N1label/nFolds) + 1) : length(oneLabelIndexes)]
+#     }
+#     if (length(oneLabelIndexes) > 0){
+#       for (iFold in 1 : nFolds){
+#         if (length(oneLabelIndexes) > 0){
+#           indexes[[iFold]] <- c(indexes[[iFold]], oneLabelIndexes[1])
+#           oneLabelIndexes  <- oneLabelIndexes[ - 1]
+#         }
+#       }
+#     }
+#   }
+#   
+#   return(indexes)
+# }
 ############################################################################################# 
 createFoldsME <- function (y, k = 10, list = TRUE, returnTrain = FALSE) 
 {
